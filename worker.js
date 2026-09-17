@@ -4,9 +4,12 @@
  */
 const INSTANCES = [
   "https://invidious.f5.si",
-  "https://invidious.protokolla.fi",
-  "https://yt.oelrichsgarcia.de",
-  "https://invidious.darkness.services",
+  "https://yt.chocolatemoo53.com",
+  "https://invidious.tiekoetter.com",
+];
+const PIPED = [
+  "https://pipedapi.ducks.party",
+  "https://api.piped.private.coffee",
 ];
 const PLAYER_URL =
   "https://www.youtube.com/youtubei/v1/player?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w&prettyPrint=false";
@@ -210,7 +213,50 @@ async function resolveVideo(input) {
   } catch (error) {
     last = error instanceof Error ? error.message : last;
   }
-  throw new Error(/bot|机器人|sign in|登录/i.test(last) ? "油管暂时限制了解析，请稍后再试" : last);
+  try {
+    return await resolveFromOembed(id);
+  } catch (error) {
+    last = error instanceof Error ? error.message : last;
+  }
+  throw new Error("解析没有成功，请过几分钟再试");
+}
+
+function latestVersionUrl(id, itag) {
+  return `https://invidious.f5.si/latest_version?id=${encodeURIComponent(id)}&itag=${itag}`;
+}
+
+async function resolveFromOembed(id) {
+  const res = await fetch(
+    `https://www.youtube.com/oembed?url=${encodeURIComponent("https://www.youtube.com/watch?v=" + id)}&format=json`,
+    { signal: AbortSignal.timeout(12000) },
+  );
+  if (!res.ok) throw new Error("没有找到这个视频");
+  const meta = await res.json();
+  if (!meta || !meta.title) throw new Error("没有找到这个视频");
+  return {
+    info: {
+      id,
+      title: meta.title,
+      author: meta.author_name || "",
+      duration: 0,
+      views: 0,
+      thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+      formats: [
+        {
+          id: "360",
+          label: "360p 有声",
+          note: "MP4 · 含音轨 · 推荐",
+          ext: "mp4",
+          recommended: true,
+        },
+        { id: "audio", label: "音频 M4A", note: "AAC · 适合听歌", ext: "m4a" },
+      ],
+    },
+    sources: {
+      "360": { url: latestVersionUrl(id, 18), itag: 18 },
+      audio: { url: latestVersionUrl(id, 140), itag: 140 },
+    },
+  };
 }
 
 async function resolveFromInnertube(id) {
@@ -577,22 +623,38 @@ async function handleDownload(request) {
     const ext = quality === "audio" ? "m4a" : "mp4";
     const filename = safeFilename(info.title, ext);
     const utf8Name = `${info.title}.${ext}`;
-    const upstream = await fetch(source.url, {
-      headers: { Accept: "*/*", "User-Agent": FETCH_UA, "Accept-Encoding": "identity" },
-      redirect: "follow",
-    });
-    if (!upstream.ok || !upstream.body) return new Response("拉取视频失败", { status: 502 });
-    const headers = new Headers();
-    headers.set("Content-Type", "application/octet-stream");
-    headers.set(
-      "Content-Disposition",
-      `attachment; filename="${filename.replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(utf8Name)}`,
-    );
-    headers.set("Cache-Control", "no-store");
-    headers.set("X-Content-Type-Options", "nosniff");
-    const len = upstream.headers.get("content-length");
-    if (len) headers.set("Content-Length", len);
-    return new Response(upstream.body, { status: 200, headers });
+    const itag = quality === "audio" ? 140 : 18;
+    const mirrors = [
+      source.url,
+      latestVersionUrl(videoId, itag),
+      `https://yt.chocolatemoo53.com/latest_version?id=${encodeURIComponent(videoId)}&itag=${itag}`,
+    ].filter(Boolean);
+    for (const mediaUrl of mirrors) {
+      try {
+        const upstream = await fetch(mediaUrl, {
+          headers: { Accept: "*/*", "User-Agent": FETCH_UA, "Accept-Encoding": "identity" },
+          redirect: "follow",
+        });
+        const type = (upstream.headers.get("content-type") || "").toLowerCase();
+        if (!upstream.ok || !upstream.body || type.includes("text/html") || type.includes("json")) {
+          continue;
+        }
+        const headers = new Headers();
+        headers.set("Content-Type", "application/octet-stream");
+        headers.set(
+          "Content-Disposition",
+          `attachment; filename="${filename.replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(utf8Name)}`,
+        );
+        headers.set("Cache-Control", "no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
+        const len = upstream.headers.get("content-length");
+        if (len) headers.set("Content-Length", len);
+        return new Response(upstream.body, { status: 200, headers });
+      } catch {
+        /* try next */
+      }
+    }
+    return Response.redirect(latestVersionUrl(videoId, itag), 302);
   } catch (error) {
     return new Response(error instanceof Error ? error.message : "下载失败", { status: 502 });
   }
