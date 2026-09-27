@@ -1,0 +1,4 @@
+   name = "yt-downloader-cf"
+   main = "cloudflare/worker-cf.js"
+   compatibility_date = "2026-09-01"
+  
