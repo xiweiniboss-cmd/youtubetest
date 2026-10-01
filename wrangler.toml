@@ -1,0 +1,5 @@
+# 部署配置：把这个文件和 worker-cf.js 一起放在 GitHub 仓库根目录即可
+# Cloudflare 后台构建设置：Build command 留空，Deploy command 填 npx wrangler deploy
+name = "yt-downloader-cf"
+main = "worker-cf.js"
+compatibility_date = "2026-09-01"
